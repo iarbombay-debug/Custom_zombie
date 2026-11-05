@@ -1311,6 +1311,8 @@ updateThemeButton();
     $cloud("authForm").classList.toggle("hide", !!currentUser);
     $cloud("logoutBtn").classList.toggle("hide", !currentUser);
     $cloud("adminPanel").classList.toggle("hide", !isAdmin);
+    console.log("isAdmin:", isAdmin);
+    console.log("adminPanel:", $cloud("adminPanel"));
 
     await loadCatalog();
   }
