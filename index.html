@@ -1192,5 +1192,306 @@ themeToggle.onclick = function () {
 
 updateThemeButton();
   </script>
+
+<!-- SUPABASE: подключение -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+<style>
+  .cloud-panel {
+    margin-top: 18px;
+    padding: 16px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--panel);
+  }
+  .cloud-panel input {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    margin: 7px 0 12px;
+    padding: 10px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--ink);
+  }
+  .cloud-item {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 12px;
+    margin-top: 10px;
+  }
+  .cloud-item pre {
+    margin-top: 10px;
+    max-height: 250px;
+  }
+</style>
+
+<section class="cloud-panel">
+  <h2>Аккаунт</h2>
+  <div id="authStatus">Проверка подключения...</div>
+
+  <div id="authForm">
+    <label>Email
+      <input id="authEmail" type="email" placeholder="Твоя почта">
+    </label>
+    <label>Пароль
+      <input id="authPassword" type="password" placeholder="Пароль">
+    </label>
+    <div class="row">
+      <button class="btn" id="registerBtn">Регистрация</button>
+      <button class="btn alt" id="loginBtn">Войти</button>
+    </div>
+  </div>
+
+  <button class="btn alt hide" id="logoutBtn">Выйти</button>
+  <div class="msg" id="authMessage"></div>
+</section>
+
+<section class="cloud-panel">
+  <h2>Общий каталог зомби</h2>
+  <p class="sub">Зомби, добавленные администраторами, видны всем посетителям.</p>
+
+  <button class="btn alt" id="refreshCatalog">Обновить каталог</button>
+  <div id="catalogMessage" class="msg"></div>
+  <div id="catalogList"></div>
+
+  <div id="adminPanel" class="hide">
+    <hr>
+    <h2>Админ-панель</h2>
+    <p>Добавить текущего зомби из конструктора в общий каталог.</p>
+    <label>Описание
+      <input id="catalogDescription" type="text" placeholder="Описание зомби">
+    </label>
+    <button class="btn" id="publishZombie">Добавить в каталог</button>
+    <div id="adminMessage" class="msg"></div>
+  </div>
+</section>
+
+<script>
+(function () {
+  const SUPABASE_URL = "https://yoelatkaddtpmdthpsyj.supabase.co";
+  const SUPABASE_KEY = "sb_publishable_XEIQKmr89KVqh6cpiE6LcQ_U2R8oKoW";
+
+  const client = window.supabase.createClient(
+    SUPABASE_URL,
+    SUPABASE_KEY
+  );
+
+  const $cloud = id => document.getElementById(id);
+  let currentUser = null;
+  let isAdmin = false;
+
+  function message(id, text) {
+    $cloud(id).textContent = text;
+  }
+
+  async function checkUser() {
+    const { data } = await client.auth.getUser();
+    currentUser = data.user || null;
+    isAdmin = false;
+
+    if (currentUser) {
+      const { data: profile, error } = await client
+        .from("profiles")
+        .select("is_admin")
+        .eq("id", currentUser.id)
+        .maybeSingle();
+
+      if (!error && profile) {
+        isAdmin = profile.is_admin === true;
+      }
+    }
+
+    $cloud("authStatus").textContent = currentUser
+      ? "Вы вошли: " + currentUser.email +
+        (isAdmin ? " (администратор)" : "")
+      : "Вы не вошли в аккаунт.";
+
+    $cloud("authForm").classList.toggle("hide", !!currentUser);
+    $cloud("logoutBtn").classList.toggle("hide", !currentUser);
+    $cloud("adminPanel").classList.toggle("hide", !isAdmin);
+
+    await loadCatalog();
+  }
+
+  async function register() {
+    const email = $cloud("authEmail").value.trim();
+    const password = $cloud("authPassword").value;
+
+    if (!email || password.length < 6) {
+      message("authMessage", "Укажи почту и пароль минимум из 6 символов.");
+      return;
+    }
+
+    const { error } = await client.auth.signUp({
+      email,
+      password
+    });
+
+    message("authMessage", error
+      ? error.message
+      : "Регистрация выполнена. Теперь попробуй войти.");
+  }
+
+  async function login() {
+    const email = $cloud("authEmail").value.trim();
+    const password = $cloud("authPassword").value;
+
+    const { error } = await client.auth.signInWithPassword({
+      email,
+      password
+    });
+
+    if (error) {
+      message("authMessage", error.message);
+      return;
+    }
+
+    message("authMessage", "Вход выполнен.");
+    await checkUser();
+  }
+
+  async function logout() {
+    await client.auth.signOut();
+    message("authMessage", "Вы вышли из аккаунта.");
+    await checkUser();
+  }
+
+  async function loadCatalog() {
+    const list = $cloud("catalogList");
+    list.replaceChildren();
+    message("catalogMessage", "Загрузка...");
+
+    const { data, error } = await client
+      .from("zombies")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      message("catalogMessage", "Ошибка: " + error.message);
+      return;
+    }
+
+    message("catalogMessage", data.length
+      ? "Зомби в каталоге: " + data.length
+      : "Каталог пока пуст.");
+
+    data.forEach(zombie => {
+      const card = document.createElement("div");
+      card.className = "cloud-item";
+
+      const title = document.createElement("h3");
+      title.textContent = zombie.name;
+
+      const description = document.createElement("p");
+      description.textContent = zombie.description || "Без описания";
+
+      const showButton = document.createElement("button");
+      showButton.className = "btn alt";
+      showButton.textContent = "Показать JSON";
+
+      const pre = document.createElement("pre");
+      pre.classList.add("hide");
+      pre.textContent = JSON.stringify(zombie.zombie_json, null, 4);
+
+      showButton.onclick = () => pre.classList.toggle("hide");
+
+      card.append(title, description, showButton, pre);
+
+      if (isAdmin) {
+        const editButton = document.createElement("button");
+        editButton.className = "btn alt";
+        editButton.textContent = "Изменить описание";
+
+        editButton.onclick = async () => {
+          const newDescription = prompt(
+            "Новое описание:",
+            zombie.description || ""
+          );
+          if (newDescription === null) return;
+
+          const { error } = await client
+            .from("zombies")
+            .update({ description: newDescription })
+            .eq("id", zombie.id);
+
+          message("catalogMessage", error
+            ? error.message
+            : "Описание обновлено.");
+          await loadCatalog();
+        };
+
+        const deleteButton = document.createElement("button");
+        deleteButton.className = "btn alt";
+        deleteButton.textContent = "Удалить";
+
+        deleteButton.onclick = async () => {
+          if (!confirm("Удалить этого зомби из каталога?")) return;
+
+          const { error } = await client
+            .from("zombies")
+            .delete()
+            .eq("id", zombie.id);
+
+          message("catalogMessage", error
+            ? error.message
+            : "Зомби удалён.");
+          await loadCatalog();
+        };
+
+        card.append(editButton, deleteButton);
+      }
+
+      list.appendChild(card);
+    });
+  }
+
+  async function publishZombie() {
+    if (!currentUser || !isAdmin) {
+      message("adminMessage", "Нет прав администратора.");
+      return;
+    }
+
+    if (!nameOk()) {
+      message("adminMessage", "Исправь имя зомби в конструкторе.");
+      return;
+    }
+
+    const name = $("name").value.trim();
+    const zombieJson = build();
+
+    const { error } = await client
+      .from("zombies")
+      .insert({
+        name: name,
+        zombie_type: type,
+        description: $cloud("catalogDescription").value.trim(),
+        zombie_json: zombieJson
+      });
+
+    if (error) {
+      message("adminMessage", "Ошибка: " + error.message);
+      return;
+    }
+
+    message("adminMessage", "Зомби добавлен в общий каталог!");
+    await loadCatalog();
+  }
+
+  $cloud("registerBtn").onclick = register;
+  $cloud("loginBtn").onclick = login;
+  $cloud("logoutBtn").onclick = logout;
+  $cloud("refreshCatalog").onclick = loadCatalog;
+  $cloud("publishZombie").onclick = publishZombie;
+
+  client.auth.onAuthStateChange(() => {
+    setTimeout(checkUser, 0);
+  });
+
+  checkUser();
+})();
+</script>
+
 </body>
 </html>
